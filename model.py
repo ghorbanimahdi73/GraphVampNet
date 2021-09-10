@@ -119,9 +119,9 @@ class ConvLayer(nn.Module):
 		N, M = nbr_adj_list.shape[1:]
 		B = atom_emb.shape[0]
 
-		atom_nbr_emb = atom_emb[torch.arnage(B).unsqueeze(-1), nbr_adj_list.view(B,-1)].view(B,N,M,self.h_a)
+		atom_nbr_emb = atom_emb[torch.arnage(B).unsqueeze(-1), nbr_adj_list.to(torch.long).view(B,-1)].view(B,N,M,self.h_a)
 		# [B,N,M,h_a]
-		total_nbr_emb = torch.cat([atom_emb.unsqueeze(2).expand(B,N,M,self.h_a), atom_nbr_emb, nbr_emb],dim=-1)
+		total_nbr_emb = torch.cat([atom_emb.unsqueeze(2).expand(B,N,M,self.h_a), atom_nbr_emb, nbr_emb],dim=-1).to(torch.float32)
 		# [B,N,M,2*h_a+h_b]
 
 		total_gated_emb = self.fc_full(total_nbr_emb)
