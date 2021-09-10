@@ -1,6 +1,4 @@
 import torch
-import torch_geometric
-import pyemma
 import numpy as np
 import deeptime
 from tqdm import tqdm
@@ -11,9 +9,11 @@ import mdshare
 from torch.utils.data import DataLoader
 
 
-if torch.cud.is_available():
+if torch.cuda.is_available():
 	device = torch.device('cuda')
+	print('cuda is is available')
 else:
+	print('Using CPU')
 	device = torch.device('cpu')
 
 
@@ -83,15 +83,21 @@ def get_nbrs(all_coords, num_neighbors=5):
 	return all_dists, all_inds
 
 
-dists, inds = get_nbrs(data_reshaped)
+#dists, inds = get_nbrs(data_reshaped)
 #  list of trajectories [T,N,M]
-np.savez('dists.npz', dists)
-np.savez('inds.npz', inds)
+#np.savez('dists.npz', dists)
+#np.savez('inds.npz', inds)
 
+dists, inds = np.load('dists.npz')['arr_0'], np.load('inds.npz')['arr_0']
+mydists = torch.from_numpy(dists).to(device)
+myinds = torch.from_numpy(inds).to(device)
 data = []
 for i in range(len(dists)):
-	data.append(np.concatenate((dists[i],inds[i]), axis=-1))
+	data.append(torch.cat((mydists[i],myinds[i]), axis=-1))
 
+data_np = []
+for i in range(len(dists)):
+	data_np.append(np.concatenate((dists[i],inds[i]), axis=-1))
 
 # data is a list of trajectories [T,N,M+M]
 
@@ -119,7 +125,7 @@ class ConvLayer(nn.Module):
 		N, M = nbr_adj_list.shape[1:]
 		B = atom_emb.shape[0]
 
-		atom_nbr_emb = atom_emb[torch.arnage(B).unsqueeze(-1), nbr_adj_list.to(torch.long).view(B,-1)].view(B,N,M,self.h_a)
+		atom_nbr_emb = atom_emb[torch.arange(B).unsqueeze(-1), nbr_adj_list.to(torch.long).view(B,-1)].view(B,N,M,self.h_a).to(device)
 		# [B,N,M,h_a]
 		total_nbr_emb = torch.cat([atom_emb.unsqueeze(2).expand(B,N,M,self.h_a), atom_nbr_emb, nbr_emb],dim=-1).to(torch.float32)
 		# [B,N,M,2*h_a+h_b]
@@ -166,16 +172,17 @@ class GaussianDistance(object):
 		returns:
 		expanded distance with shape [B, N, M, bond_fea_len]
 		'''
-		return torch.exp(-(torch.unsqueeze(distance,-1)-self.filter)**2/self.var**2)
+		return torch.exp(-(torch.unsqueeze(distance,-1).to(device)-self.filter.to(device))**2/self.var**2)
 
 
 class GraphVampNet(nn.Module):
 
 	def __init__(self, num_atoms=10, num_neighbors=5, tau=1,
 				n_classes=6, n_conv=3, dmin=0., dmax=3., step=0.2,
-				learning_rate=0.001, batch_size=10000, n_epoch=20,
+				learning_rate=0.001, batch_size=10000, n_epochs=100,
 				h_a=16):
 
+		super(GraphVampNet, self).__init__()
 		self.num_atoms = num_atoms
 		self.num_neighbors = num_neighbors
 		self.tau = tau
@@ -186,9 +193,9 @@ class GraphVampNet(nn.Module):
 		self.step = step
 		self.learning_rate = learning_rate
 		self.batch_size = batch_size
-		self.n_epoch = n_epoch
+		self.n_epochs = n_epochs
 		self.h_a = h_a
-		self.gauss = Gauss(dmin, dmax, step)
+		self.gauss = GaussianDistance(dmin, dmax, step)
 		self.atom_emb = nn.Embedding(num_embeddings=self.num_atoms, embedding_dim=self.h_a)
 		self.atom_emb.weight.data.normal_()
 		self.convs = nn.ModuleList([ConvLayer(self.h_a, h_b=16) for _ in range(self.n_conv)])
@@ -208,10 +215,11 @@ class GraphVampNet(nn.Module):
 		nbr_adj_list = data[:,:,n//2:]
 		N = nbr_adj_list.shape[1]
 		B = nbr_adj_list.shape[0]
-		nbr_emb = self.gauss.expand(nbr_adj_dist)
-		# this is the edge embeddings
 
-		atom_emb_idx = torch.arange(B).repeat(B,1)
+		nbr_emb = self.gauss.expand(nbr_adj_dist)
+		# this is the edge embedding
+
+		atom_emb_idx = torch.arange(N).repeat(B,1).to(device)
 		atom_emb = self.atom_emb(atom_emb_idx)
 		for idx in range(self.n_conv):
 			atom_emb = self.convs[idx](atom_emb, nbr_emb, nbr_adj_list)
@@ -241,7 +249,47 @@ lobe = lobe.to(device)
 
 
 from deeptime.decomposition.deep import VAMPNet
+from deeptime.decomposition import VAMP
 
 vampnet = VAMPNet(lobe=lobe, lobe_timelagged=lobe_timelagged, learning_rate=0.0005, device=device)
 
-model = model.fit(loader_train, n_epoch=30, validation_loader=loader_val).fetch_model()
+model = vampnet.fit(loader_train, n_epochs=100, validation_loader=loader_val, progress=tqdm).fetch_model()
+
+plt.set_cmap('jet')
+
+plt.loglog(*vampnet.train_scores.T, label='training')
+plt.loglog(*vampnet.validation_scores.T, label='validation')
+plt.xlabel('step')
+plt.ylabel('score')
+plt.legend()
+
+plt.savefig('scores.png')
+
+state_probabilities = model.transform(data[0])
+
+f, axes = plt.subplots(3,2, figsize=(12,16))
+for i, ax in enumerate(axes.flatten()):
+	ax.scatter(*dihedral[0][::5].T, c=state_probabilities[...,i][::5])
+	ax.set_title(f'state {i+1}')
+f.savefig('state_prob.png')
+
+
+fig, ax = plt.subplots(1,1, figsize=(8,10))
+assignments = state_probabilities.argmax(1)
+plt.scatter(*dihedral[0].T, c=assignments, s=5, alpha=0.1)
+plt.title('Transformed state assignments')
+plt.savefig('assignments.png')
+
+
+lagtimes = np.arange(1,201, dtype=np.int32)
+timescales = []
+for lag in tqdm(lagtimes):
+	ts = VAMP(lagtime=lag, observable_transform=model).fit(data).fetch_model().timescales(k=5)
+	timescales.append(ts)
+
+f, ax = plt.subplots(1, 1)
+ax.semilogy(lagtimes, timescales)
+ax.set_xlabel('lagtime')
+ax.set_ylabel('timescale / step')
+ax.fill_between(lagtimes, ax.get_ylim()[0]*np.ones(len(lagtimes)), lagtimes, alpha=0.5, color='grey');
+f.savefig('ITS.png')
