@@ -155,6 +155,7 @@ class GaussianDistance(object):
 		assert dmin < dmax
 		assert dmax - dmin > step
 		self.filter = torch.arange(dmin, dmax+step, step)
+		self.num_features = len(self.filter)
 		if var is None:
 			var = step
 		self.var = var
@@ -196,12 +197,14 @@ class GraphVampNet(nn.Module):
 		self.n_epochs = n_epochs
 		self.h_a = h_a
 		self.gauss = GaussianDistance(dmin, dmax, step)
+		self.h_b = self.gauss.num_features
 		self.atom_emb = nn.Embedding(num_embeddings=self.num_atoms, embedding_dim=self.h_a)
 		self.atom_emb.weight.data.normal_()
 		self.convs = nn.ModuleList([ConvLayer(self.h_a, h_b=16) for _ in range(self.n_conv)])
 		self.conv_activation = nn.ReLU()
 		self.num_neighbors = num_neighbors
 		self.fc_classes = nn.Linear(self.h_a, n_classes)
+		
 
 	def pooling(self, atom_emb):
 
@@ -279,6 +282,7 @@ assignments = state_probabilities.argmax(1)
 plt.scatter(*dihedral[0].T, c=assignments, s=5, alpha=0.1)
 plt.title('Transformed state assignments')
 plt.savefig('assignments.png')
+
 
 
 lagtimes = np.arange(1,201, dtype=np.int32)
