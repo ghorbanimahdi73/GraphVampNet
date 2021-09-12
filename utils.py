@@ -42,7 +42,9 @@ for i in range(len(data)):
 
 def get_nbrs(all_coords, num_neighbors=5):
 	'''
-	inputs: a trajectory or list of trajectories [N,num_atoms,dim]
+	inputs: a trajectory or list of trajectories with shape [T, num_atoms, dim]
+		T: number of steps
+		dim: number of dimensions (3 coordinates) 
 
 	Returns:
 		if all_coords is a list:
@@ -50,7 +52,7 @@ def get_nbrs(all_coords, num_neighbors=5):
 		else:
 			trajectory of distances and indices
 
-	[N, num_atoms, num_neighbors]
+		[N, num_atoms, num_neighbors]
 	'''
 	k_nbr=num_neighbors+1
 	if type(all_coords) == list:
@@ -60,7 +62,7 @@ def get_nbrs(all_coords, num_neighbors=5):
 			dists = []
 			inds = []
 			tmp_coords = all_coords[i]
-			for j in range(len(tmp_coords)):
+			for j in tqmd(range(len(tmp_coords))):
 				tree = BallTree(tmp_coords[j], leaf_size=3)
 				dist, ind = tree.query(tmp_coords[j], k=k_nbr)
 				dists.append(dist[:,1:])
@@ -83,5 +85,7 @@ def get_nbrs(all_coords, num_neighbors=5):
 
 	return all_dists, all_inds
 
+dists, inds = get_nbrs(data_reshaped)
 np.savez('dists.npz', dists)
 np.savez('inds.npz', inds)
+

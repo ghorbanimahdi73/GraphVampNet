@@ -5,6 +5,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+if torch.cuda.is_available():
+	device = torch.device('cuda')
+	print('cuda is is available')
+else:
+	print('Using CPU')
+	device = torch.device('cpu')
+
+
 def gather_nodes(nodes, neighbor_idx):
 	'''
 	given node-features [B,N,h_a] and neighbor_dix [B,N,M] this find the neighbors of each
@@ -57,6 +66,11 @@ class Normalize(nn.Module):
 
 class NeighborAttention(nn.Module):
 	def __init__(self, num_hidden, num_in, num_heads=4):
+		'''
+		num_hidden: number of features for atoms
+		num_in: number of features for edges
+		num_heads: number of heads in multi-head attention
+		'''
 		super(NeighborAttention, self).__init__()
 		self.num_heads = num_heads
 		self.num_hidden = num_hidden
@@ -71,12 +85,12 @@ class NeighborAttention(nn.Module):
 	def _masked_softmax(self, attend_logits, mask_attend, dim=-1):
 		''' numercially stable masked softmax '''
 		negative_inf = np.finfo(np.float32).min
-		attend_logits = torch.where(mask_attend>0, attend_logits, torch.tensor(negative_inf))
+		attend_logits = torch.where(mask_attend>0, attend_logits, torch.tensor(negative_inf).to(device))
 		attend = F.softmax(attend_logits, dim)
 		attend = mask_attend * attend
 		return attend
 
-	def forward(self, h_v, h_E, mask_attend=None):
+	def forward(self, h_V, h_E, mask_attend=None):
 		''' self attention graph structure O(NK)
 		args:
 			h_V: node features [batch_size, num_nodes, n_hidden]
@@ -90,9 +104,9 @@ class NeighborAttention(nn.Module):
 		n_heads = self.num_heads
 		d = int(self.num_hidden/n_heads)
 
-		Q = self.W_Q(h_V).view([n_batch, n_nodes, 1, n_heads, 1, d]) # [B,N,1,n_heads,1,d]
-		K = self.W_K(h_E).view([n_batch, n_nodes, n_neighbors, n_heads, d, 1])
-		V = self.W_V(h_E).view([n_batch, n_nodes, n_neighbors, n_heads, d])
+		Q = self.W_Q(h_V.to(torch.float32)).view([n_batch, n_nodes, 1, n_heads, 1, d]) # [B,N,1,n_heads,1,d]
+		K = self.W_K(h_E.to(torch.float32)).view([n_batch, n_nodes, n_neighbors, n_heads, d, 1])
+		V = self.W_V(h_E.to(torch.float32)).view([n_batch, n_nodes, n_neighbors, n_heads, d])
 
 		# attention with scaled inner product
 		attend_logits = torch.matmul(Q,K).view([n_batch, n_nodes, n_neighbors, n_heads]).transpose(-2,-1)
@@ -100,13 +114,13 @@ class NeighborAttention(nn.Module):
 		attend_logits = attend_logits / np.sqrt(d)
 		if mask_attend is not None:
 			# masked softmax
-			mask = mask_attend.unsqueeze(2).expand(-1,-1,n_heads,-1)
+			mask = mask_attend.unsqueeze(2).expand(-1,-1,n_heads,-1).to(device)
 			attend = self._masked_softmax(attend_logits, mask)
 		else:
-			attend = F.softmax(attend_logits, -1) 
+			attend = F.softmax(attend_logits, -1).to(device)
 		#[B,N,n_heads,n_nbrs]
 
-		h_V_update = torch.matmul(attend.unsqueeze(-2), V.transpose(2,3))
+		h_V_update = torch.matmul(attend.unsqueeze(-2).to(torch.float32), V.transpose(2,3))
 		h_V_update = h_V_update.view([n_batch, n_nodes, self.num_hidden])
 		h_V_update = self.W_O(h_V_update)
 		return h_V_update
