@@ -23,7 +23,6 @@ else:
 	print('Using CPU')
 	device = torch.device('cpu')
 
-print('device is use is :', device)
 
 
 

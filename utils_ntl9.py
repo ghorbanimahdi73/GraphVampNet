@@ -11,8 +11,6 @@ import json
 from sklearn.neighbors import BallTree
 import mdtraj as md
 import argparse
-import sys
-
 
 
 
@@ -26,9 +24,14 @@ args = parser.parse_args()
 ########## for loading the BBA trajectory ####################################
 
 
-traj_1 = ['data/DESRES-Trajectory_1FME-0-c-alpha/1FME-0-c-alpha/1FME-0-c-alpha-'+str(i).zfill(3)+'.dcd' for i in range(12)]
-traj_2 = ['data/DESRES-Trajectory_1FME-1-c-alpha/1FME-1-c-alpha/1FME-1-c-alpha-'+str(i).zfill(3)+'.dcd' for i in range(6)]
-top = md.load_pdb('1fme_ca.pdb')
+traj_1 = ['data/DESRES-Trajectory_NTL9-0-c-alpha/NTL9-0-c-alpha/NTL9-0-c-alpha-'+str(i).zfill(3)+'.dcd' for i in range(56)]
+traj_2 = ['data/DESRES-Trajectory_NTL9-1-c-alpha/NTL9-1-c-alpha/NTL9-1-c-alpha-'+str(i).zfill(3)+'.dcd' for i in range(54)]
+traj_3 = ['data/DESRES-Trajectory_NTL9-1-c-alpha/NTL9-1-c-alpha/NTL9-1-c-alpha-'+str(i).zfill(3)+'.dcd' for i in range(20)]
+traj_4 = ['data/DESRES-Trajectory_NTL9-1-c-alpha/NTL9-1-c-alpha/NTL9-1-c-alpha-'+str(i).zfill(3)+'.dcd' for i in range(19)]
+
+
+
+top = md.load_pdb('ntl9_ca.pdb')
 top = top.topology
 
 t1 = md.load_dcd(traj_1[0],top=top, stride=args.stride)
@@ -43,10 +46,22 @@ for i in range(1,len(traj_2)):
 	t2 = md.load_dcd(traj_2[i], top=top, stride=args.stride)
 	coor_t2 = np.concatenate((coor_t2, t2.xyz), axis=0)
 
+t3 = md.load_dcd(traj_3[0],top=top, stride=args.stride)
+coor_t3 = t3.xyz
+for i in range(1,len(traj_3)):
+	t3 = md.load_dcd(traj_3[i], top=top, stride=args.stride)
+	coor_t3 = np.concatenate((coor_t3, t3.xyz), axis=0)
+
+t4 = md.load_dcd(traj_4[0],top=top, stride=args.stride)
+coor_t4 = t4.xyz
+for i in range(1,len(traj_4)):
+	t4 = md.load_dcd(traj_4[i], top=top, stride=args.stride)
+	coor_t4 = np.concatenate((coor_t1, t1.xyz), axis=0)
+
 print(coor_t1.shape)
 print(coor_t2.shape)
 
-data = list([coor_t1, coor_t2])
+data = list([coor_t1, coor_t2, coor_t3, coor_t4])
 
 
 
@@ -128,30 +143,3 @@ dists, inds = get_nbrs(data, args.num_neighbors)
 np.savez('dists_BBA_'+str(args.num_neighbors)+'.npz', dists[0],dists[1])
 np.savez('inds_BBA_'+str(args.num_neighbors)+'.npz', inds[0],inds[1])
 
-
-
-
-def count_parameters(model):
-	'''
-	count the number of parameters in the model
-	'''
-	return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-def chunks(data, chunk_size=5000):
-	'''
-	splitting the trajectory into chunks for passing into analysis part
-	data: list of trajectories
-	chunk_size: the size of each chunk
-	'''
-	if type(data) == list:
-			
-		for data_tmp in data:
-			for j in range(0, len(data_tmp),chunk_size):
-				print(data_tmp[j:j+chunk_size,...].shape)
-				yield data_tmp[j:j+chunk_size,...]
-
-	else:
-
-		for j in range(0, len(data), chunk_size):
-			yield data[j:j+chunk_size,...]

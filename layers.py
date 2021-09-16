@@ -67,6 +67,9 @@ class Normalize(nn.Module):
 class NeighborAttention(nn.Module):
 	def __init__(self, num_hidden, num_in, num_heads=4):
 		'''
+		taken from the following page:
+		https://github.com/jingraham/neurips19-graph-protein-design
+		
 		num_hidden: number of features for atoms
 		num_in: number of features for edges
 		num_heads: number of heads in multi-head attention
