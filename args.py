@@ -28,5 +28,7 @@ def buildParser():
 	parser.add_argument('--num_heads', default=2, type=int, help='number of heads in multihead attention')
 	parser.add_argument('--trained-model', default=None, type=str, help='path to the trained model for loading')
 	parser.add_argument('--train', default=False, action='store_true', help='Whether to train the model or not')
-
+	parser.add_argument('--use_backbone_atoms', default=False, action='store_true', help='Whether to use all the back bone atoms for training')
+	parser.add_argument('--h_g', type=int, default=8, help='Number of embedding dimension after backbone pooling')
+	
 	return parser

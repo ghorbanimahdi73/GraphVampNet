@@ -131,13 +131,6 @@ np.savez('inds_BBA_'+str(args.num_neighbors)+'.npz', inds[0],inds[1])
 
 
 
-def count_parameters(model):
-	'''
-	count the number of parameters in the model
-	'''
-	return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 def chunks(data, chunk_size=5000):
 	'''
 	splitting the trajectory into chunks for passing into analysis part

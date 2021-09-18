@@ -185,6 +185,7 @@ elif args.train:
 
 
 
+
 #state_probabilities = model.transform(data[0])
 #
 #f, axes = plt.subplots(3,2, figsize=(12,16))
@@ -201,6 +202,12 @@ elif args.train:
 #plt.savefig('assignments.png')
 
 
+
+
+
+
+
+
 data_np = []
 for i in range(len(data)):
 	data_np.append(data[i].cpu().numpy())
@@ -208,21 +215,24 @@ for i in range(len(data)):
 
 # for the analysis part create an iterator for the whole dataset to feed in batches
 whole_dataset = TrajectoryDataset.from_trajectories(lagtime=args.tau, data=data_np)
-whole_dataloder = DataLoader(whole_dataset, batch_size=args.batch_size)
+whole_dataloder = DataLoader(whole_dataset, batch_size=args.batch_size, shuffle=False)
 
 
 
 # for plotting the implied timescales
 lagtimes = np.arange(1,101,2, dtype=np.int32)
-
 timescales = []
 for lag in tqdm(lagtimes):
-	vamp = VAMP(lagtime=lag, observable_transform=model)
+	vamp = VAMP(lagatime=lagtime, observable_transform=model)
+	whole_dataset = TrajectoryDataset.from_trajectories(lagtime=lag, data=data_np)
+	whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
 	for batch_0, batch_t in whole_dataloder:
-		vamp.partial_fit((batch_0.cpu().numpy(),batch_t.cpu().numpy()))
+		vamp.partial_fit((batch_0.numpy(), batch_t.numpy()))
 
-	ts = vamp.fetch_model().timescales(k=5)
+	covariances = vamp._covariance_estimator.fetch_model()
+	ts = vamp.fit_from_covariances(covariances).fetch_model().timescales(k=5)
 	timescales.append(ts)
+
 
 f, ax = plt.subplots(1, 1)
 ax.semilogy(lagtimes, timescales)
@@ -236,9 +246,9 @@ f.savefig(args.save_folder+'/ITS.png')
 
 
 # for plotting the CK test
-validator = vamp_estimator.chapman_kolmogorov_validator(mlags=20)
-cktest = validator.fit(data, n_jobs=1, progress=tqdm).fetch_model()
+validator = vamp.chapman_kolmogorov_validator(mlags=20)
 
+cktest = validator.fit(data, n_jobs=1, progress=tqdm).fetch_model()
 n_states = len(vamp.singular_values)
 
 tau = cktest.lagtimes[1]
@@ -257,6 +267,3 @@ fig.legend([pred[0], est[0]], ["Predictions", "Estimates"], 'lower center', ncol
            bbox_to_anchor=(0.5, -0.1));
 
 fig.save(args.save_folder+'/cktest.png')
-
-
-

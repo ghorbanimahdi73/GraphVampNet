@@ -11,6 +11,7 @@ import json
 from sklearn.neighbors import BallTree
 from args import buildParser
 from layers import GaussianDistance, ConvLayer, NeighborAttention
+from torch_scatter import scatter_mean
 
 
 args = buildParser().parse_args()
@@ -24,16 +25,13 @@ else:
 	device = torch.device('cpu')
 
 
-
-
-
 class GraphVampNet(nn.Module):
 
 	def __init__(self, num_atoms=args.num_atoms, num_neighbors=args.num_neighbors, tau=args.tau,
 				n_classes=args.num_classes, n_conv=args.n_conv, dmin=args.dmin, dmax=args.dmax, step=args.step,
 				learning_rate=args.lr, batch_size=args.batch_size, n_epochs=args.epochs,
-				h_a=args.h_a, atom_embedding_init='normal', use_pre_trained=False,
-				pre_trained_weights_file=None, conv_type=args.conv_type, num_heads=args.num_heads):
+				h_a=args.h_a, h_g=args.h_g, atom_embedding_init='normal', use_pre_trained=False,
+				pre_trained_weights_file=None, conv_type=args.conv_type, num_heads=args.num_heads, pool_backbone=args.pool_backbone):
 
 		super(GraphVampNet, self).__init__()
 		self.num_atoms = num_atoms
@@ -48,6 +46,7 @@ class GraphVampNet(nn.Module):
 		self.batch_size = batch_size
 		self.n_epochs = n_epochs
 		self.h_a = h_a
+		self.h_g = h_g
 		self.gauss = GaussianDistance(dmin, dmax, step)
 		self.h_b = self.gauss.num_features
 		self.num_heads = num_heads
@@ -63,7 +62,10 @@ class GraphVampNet(nn.Module):
 		self.fc_classes = nn.Linear(self.h_a, n_classes)
 		self.init = atom_embedding_init
 		self.use_pre_trained = use_pre_trained
-		
+
+		if args.use_backbone_atoms:
+			self.amino_emb = nn.Linear(self.h_a, self.h_g)
+
 		if use_pre_trained:
 			self.pre_trained_emb(pre_trained_weights_file)
 		else:
@@ -86,6 +88,7 @@ class GraphVampNet(nn.Module):
 		self.embedding = nn.Linear(self.h_init, self.h_a)
 
 
+
 	def init_emb(self):
 		'''
 		Initialize random embedding for the atoms
@@ -106,7 +109,33 @@ class GraphVampNet(nn.Module):
 		summed = torch.sum(atom_emb, dim=1)
 		return summed / self.num_atoms
 
-	def forward(self,data):
+	def pool_amino(self, atom_emb):
+		'''
+		pooling the features of atoms in each amino acid to get a feature vector for each residue
+		parameters:
+		--------------------------
+		atom_emb: embedding of atoms [B,N,h_a]
+		residue_atom_idx: mapping between every atom and every residue in the protein
+				size: [N] example [0,0,0,1,1,1,2,2,2] for N=6 and NA=3
+
+		Returns: 
+		--------------------------
+		pooled features of amino acids in the graph
+		[B, Na, h_a]
+		'''
+
+		B = atom_emb.shape[0]
+		N = atom_emb.shape[1]
+		h_a = atom_emb.shape[2]
+
+		residue_atom_idx = torch.arange(N).repeat(1,3)
+		residue_atom_idx = residue_atom_idx.view(3,N).T.reshape(-1,1).squeeze(-1)
+		Na = torch.max(residue_atom_idx)+1 # number of residues
+		pooled = scatter_mean(atom_emb, residue_atom_idx, out=atom_emb.new_zeros(B,Na,h_a), dim=1)
+		return pooled
+
+
+	def forward(self, data):
 
 		n = data.shape[-1]
 		nbr_adj_dist = data[:,:,:n//2]
@@ -130,12 +159,16 @@ class GraphVampNet(nn.Module):
 				atom_emb = self.convs[idx](atom_emb, nbr_emb, nbr_adj_list)
 
 
-		atom_emb = self.conv_activation(atom_emb)
+		emb = self.conv_activation(atom_emb)
 		# [B, N, h_a]
-		prot_emb = self.pooling(atom_emb)
+
+		if args.use_backbone_atoms:
+			emb = self.pool_amino(emb)
+			emb = self.amino_emb(emb)
+
+		prot_emb = self.pooling(emb)
 		# [B, h_a]
 		class_logits = self.fc_classes(prot_emb)
 		# [B, n_classes]
 		class_probs = F.softmax(class_logits, dim=-1)
 		return class_probs
-
