@@ -27,13 +27,14 @@ else:
 
 class GraphVampNet(nn.Module):
 
-	def __init__(self, num_atoms=args.num_atoms, num_neighbors=args.num_neighbors, tau=args.tau,
+	def __init__(self, seq_file=args.seq_file, num_atoms=args.num_atoms, num_neighbors=args.num_neighbors, tau=args.tau,
 				n_classes=args.num_classes, n_conv=args.n_conv, dmin=args.dmin, dmax=args.dmax, step=args.step,
 				learning_rate=args.lr, batch_size=args.batch_size, n_epochs=args.epochs,
 				h_a=args.h_a, h_g=args.h_g, atom_embedding_init='normal', use_pre_trained=False,
-				pre_trained_weights_file=None, conv_type=args.conv_type, num_heads=args.num_heads, pool_backbone=args.pool_backbone):
+				pre_trained_weights_file=None, conv_type=args.conv_type, num_heads=args.num_heads, dont_pool_backbone=args.dont_pool_backbone):
 
 		super(GraphVampNet, self).__init__()
+		self.seq_file = seq_file
 		self.num_atoms = num_atoms
 		self.num_neighbors = num_neighbors
 		self.tau = tau
@@ -62,15 +63,25 @@ class GraphVampNet(nn.Module):
 		self.fc_classes = nn.Linear(self.h_a, n_classes)
 		self.init = atom_embedding_init
 		self.use_pre_trained = use_pre_trained
+		self.dont_pool_backbone = dont_pool_backbone
 
 		if args.use_backbone_atoms:
 			self.amino_emb = nn.Linear(self.h_a, self.h_g)
 
 		if use_pre_trained:
 			self.pre_trained_emb(pre_trained_weights_file)
+
+
+		elif seq_file is not None:
+			atom_emb = self.onehot_encode_amino(seq_file)
+			self.atom_embeddings = torch.tensor(atom_emb, dtype=torch.float32).to(device)
+			self.h_init = self.atom_emb.shape[-1] # dimension of atom embedding [20]
+			self.atom_emb = nn.Embedding.from_pretrained(self.atom_embeddings, freeze=False)
+
 		else:
 			self.atom_emb = nn.Embedding(num_embeddings=self.num_atoms, embedding_dim=self.h_a)
 			self.init_emb()
+
 
 	def pre_trained_emb(self, file):
 		'''
@@ -78,6 +89,7 @@ class GraphVampNet(nn.Module):
 		For now we are not freezing the pre-trained embeddings since
 		we are going to update it in the graph convolution
 		'''
+
 		with open(self.pre_trained_weights_file) as f:
 			loaded_emb = json.load(f)
 
@@ -102,6 +114,49 @@ class GraphVampNet(nn.Module):
 
 		elif self.init == 'uniform':
 			self.atom_emb.weight.data._uniform()
+
+
+	def onehot_encode_amino(self, seq_file):
+		'''
+		one-hot encoding of amino types for initializing the embedding
+		'''
+		with open(seq_file, 'r') as f:
+			sequence = open(seq_file)
+			seq = sequence.readlines()[0].strip()
+
+		amino_dict = {'A':0,
+					  'R':1,
+					  'N':2,
+					  'D':3,
+					  'C':4,
+					  'Q':5,
+					  'E':6,
+					  'G':7,
+					  'H':8,
+					  'I':9,
+					  'L':10,
+					  'K':11,
+					  'M':12,
+					  'F':13,
+					  'P':14,
+					  'S':15,
+					  'T':16,
+					  'W':17,
+					  'Y':18,
+					  'Z':19}
+
+		if args.use_backbone_atoms:
+			s_encoded = np.zeros((20, 3*len(seq)))
+			for i, n in enumerate(s):
+				s_encoded[amino_dict[n],i*3:i*3+3] = 1
+
+		else:
+			s_encoded = np.zeros((20, len(seq)))
+			for i, n in enumerate(s):
+				s_encoded[amino_dict[n],i] = 1
+
+		return s_encoded.T
+
 		#------------------------------------------------------------
 
 	def pooling(self, atom_emb):

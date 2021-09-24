@@ -19,7 +19,8 @@ from copy import deepcopy
 import os
 import pickle
 import warnings
-
+from deeptime.decomposition._koopman import KoopmanChapmanKolmogorovValidator
+from utils_vamp import *
 
 if torch.cuda.is_available():
 	device = torch.device('cuda')
@@ -33,7 +34,9 @@ warnings.filterwarnings('ignore',category=DeprecationWarning)
 
 
 args = buildParser().parse_args()
-print(args)
+
+with open('args.txt','w') as f:
+	f.write(str(args))
 
 if not os.path.exists(args.save_folder):
 	print('making the folder for saving checkpoints')
@@ -183,31 +186,6 @@ elif args.train:
 	plt.savefig(args.save_folder+'/scores.png')
 
 
-
-
-
-#state_probabilities = model.transform(data[0])
-#
-#f, axes = plt.subplots(3,2, figsize=(12,16))
-#for i, ax in enumerate(axes.flatten()):
-#	ax.scatter(*dihedral[0][::5].T, c=state_probabilities[...,i][::5])
-#	ax.set_title(f'state {i+1}')
-#f.savefig('state_prob.png')
-
-
-#fig, ax = plt.subplots(1,1, figsize=(8,10))
-#assignments = state_probabilities.argmax(1)
-#plt.scatter(*dihedral[0].T, c=assignments, s=5, alpha=0.1)
-#plt.title('Transformed state assignments')
-#plt.savefig('assignments.png')
-
-
-
-
-
-
-
-
 data_np = []
 for i in range(len(data)):
 	data_np.append(data[i].cpu().numpy())
@@ -220,36 +198,163 @@ whole_dataloder = DataLoader(whole_dataset, batch_size=args.batch_size, shuffle=
 
 
 # for plotting the implied timescales
-lagtimes = np.arange(1,101,2, dtype=np.int32)
-timescales = []
-for lag in tqdm(lagtimes):
-	vamp = VAMP(lagatime=lagtime, observable_transform=model)
-	whole_dataset = TrajectoryDataset.from_trajectories(lagtime=lag, data=data_np)
+#lagtimes = np.arange(1,201,2, dtype=np.int32)
+#timescales = []
+#for lag in tqdm(lagtimes):
+#	vamp = VAMP(lagtime=lag, observable_transform=model)
+#	whole_dataset = TrajectoryDataset.from_trajectories(lagtime=lag, data=data_np)
+#	whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
+#	for batch_0, batch_t in whole_dataloder:
+#		vamp.partial_fit((batch_0.numpy(), batch_t.numpy()))
+#
+#	covariances = vamp._covariance_estimator.fetch_model()
+#	ts = vamp.fit_from_covariances(covariances).fetch_model().timescales(k=5)
+#	timescales.append(ts)
+
+
+#f, ax = plt.subplots(1, 1)
+#ax.semilogy(lagtimes, timescales)
+#ax.set_xlabel('lagtime')
+#ax.set_ylabel('timescale / step')
+#ax.fill_between(lagtimes, ax.get_ylim()[0]*np.ones(len(lagtimes)), lagtimes, alpha=0.5, color='grey');
+#f.savefig(args.save_folder+'/ITS.png')
+
+
+
+
+def chunks(data, chunk_size=5000):
+	'''
+	splitting the trajectory into chunks for passing into analysis part
+	data: list of trajectories
+	chunk_size: the size of each chunk
+	'''
+	if type(data) == list:
+			
+		for data_tmp in data:
+			for j in range(0, len(data_tmp),chunk_size):
+				print(data_tmp[j:j+chunk_size,...].shape)
+				yield data_tmp[j:j+chunk_size,...]
+
+	else:
+
+		for j in range(0, len(data), chunk_size):
+			yield data[j:j+chunk_size,...]
+
+n_classes = int(args.num_classes)
+
+probs = []
+for data_tmp in data_np:
+	mydata = chunks(data_tmp, chunk_size=5000)
+	state_probs = np.zeros((data_tmp.shape[0], n_classes))
+	n_iter = 0
+	for i,batch in enumerate(mydata):
+		batch_size = len(batch)
+		state_probs[n_iter:n_iter+batch_size] = model.transform(batch)
+
+		n_iter = n_iter + batch_size 
+
+	print(state_probs.shape)
+	probs.append(state_probs)
+
+
+max_tau = 200
+lags = np.arange(1, max_tau, 2)
+
+its = get_its(probs, lags)
+plot_its(its, lags, ylog=False, save_folder=args.save_folder)
+
+steps = 8
+tau_msm = 200
+predicted, estimated = get_ck_test(probs, steps, tau_msm)
+
+plot_ck_test(predicted, estimated, n_classes, steps, tau_msm, args.save_folder)
+
+quit()
+
+def chapman_kolmogorov_validator(model, mlags, n_observables=None,
+								observables='phi', statistics='psi'):
+	''' returns a chapman-kolmogrov validator based on this estimator and a test model
+
+	parameters:
+	-----------------
+	model: VAMP model
+	mlags: int or int-array
+		multiple of lagtimes of the test_model to test against
+	test_model: CovarianceKoopmanModel, optional, default=None,
+		The model that is tested, if not provided uses this estimator's encapsulated model.
+	n_observables: int, optional, default=None,
+		limit the number of default observables to this number. only used if 'observables' are Nonr or 'statistics' are None.
+	observables: (input_dimension, n_observables) ndarray
+		coefficents that express one or multiple observables in the basis of the input features
+	statistics: (input_dim, n_statistics) ndarray
+		coefficents that express one or more statistics in the basis of the input features
+
+	Returns:
+	------------------
+	validator: KoopmanChapmanKolmogrovValidator
+		the validator
+	''' 
+	test_model = model.fetch_model()
+	assert test_model is not None, 'We need a test model via argument or an estimator which was already fit to data'
+
+	lagtime = model.lagtime
+	if n_observables is not None:
+		if n_observables > test_model.dim:
+			import warnings
+			warnings.warn('selected singular functgions as observables but dimension is lower thanthe requested number of observables')
+			n_observables = test_model.dim
+
+	else:
+		n_observables = test_model.dim
+
+	if isinstance(observables, str) and observables == 'phi':
+		observables = test_model.singular_vectors_right[:, :n_observables]
+		observables_mean_free = True
+	else:
+		observables_mean_free = False
+
+	if isinstance(statistics, str) and statistics == 'psi':
+		statistics = test_model.singular_vectors_left[:, :n_observables]
+		statistics_mean_free = True
+	else:
+		statistics_mean_free = False
+
+	return VAMPKoopmanCKValidator(test_model, model, lagtime, mlags, observables, statistics,
+										observables_mean_free, statistics_mean_free)
+
+def _vamp_estimate_model_for_lag(estimator: VAMP, model, data, lagtime):
+	est = VAMP(lagtime=lagtime, dim=estimator.dim, var_cutoff=estimator.var_cutoff, scaling=estimator.scaling,
+		epsilon=estimator.epsilon, observable_transform=estimator.observable_transform)
+
+	whole_dataset = TrajectoryDataset.from_trajectories(lagtime=lagtime, data=data)
 	whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
 	for batch_0, batch_t in whole_dataloder:
-		vamp.partial_fit((batch_0.numpy(), batch_t.numpy()))
+		est.partial_fit((batch_0.numpy(), batch_t.numpy()))
 
-	covariances = vamp._covariance_estimator.fetch_model()
-	ts = vamp.fit_from_covariances(covariances).fetch_model().timescales(k=5)
-	timescales.append(ts)
+	return est.fetch_model()
 
 
-f, ax = plt.subplots(1, 1)
-ax.semilogy(lagtimes, timescales)
-ax.set_xlabel('lagtime')
-ax.set_ylabel('timescale / step')
-ax.fill_between(lagtimes, ax.get_ylim()[0]*np.ones(len(lagtimes)), lagtimes, alpha=0.5, color='grey');
-f.savefig(args.save_folder+'/ITS.png')
+class VAMPKoopmanCKValidator(KoopmanChapmanKolmogorovValidator):
 
-
-
+	def fit(self, data, n_jobs=None, progress=None, **kw):
+		return super().fit(data, n_jobs, progress, _vamp_estimate_model_for_lag, **kw)
 
 
 # for plotting the CK test
-validator = vamp.chapman_kolmogorov_validator(mlags=20)
+vamp = VAMP(lagtime=lag, observable_transform=model)
+whole_dataset = TrajectoryDataset.from_trajectories(lagtime=200, data=data_np)
+whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
+for batch_0, batch_t in whole_dataloder:
+	vamp.partial_fit((batch_0.numpy(), batch_t.numpy()))
 
-cktest = validator.fit(data, n_jobs=1, progress=tqdm).fetch_model()
-n_states = len(vamp.singular_values)
+
+
+validator = chapman_kolmogorov_validator(model=vamp, mlags=10)
+
+#validator = vamp.chapman_kolmogorov_validator(mlags=5)
+
+cktest = validator.fit(data_np, n_jobs=1, progress=tqdm).fetch_model()
+n_states = args.num_classes - 1
 
 tau = cktest.lagtimes[1]
 steps = len(cktest.lagtimes)
@@ -266,4 +371,4 @@ ax[0][0].axes.get_xaxis().set_ticks(np.round(np.linspace(0, steps*tau, 3)));
 fig.legend([pred[0], est[0]], ["Predictions", "Estimates"], 'lower center', ncol=2,
            bbox_to_anchor=(0.5, -0.1));
 
-fig.save(args.save_folder+'/cktest.png')
+fig.savefig(args.save_folder+'/cktest.png')
