@@ -18,10 +18,9 @@ from deeptime.decomposition._koopman import KoopmanChapmanKolmogorovValidator
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--num-neighbors', type=int, default=7, help='number of neighbors')
-parser.add_argument('--traj-folder', type=str, default=None, help='the path to the trajecotyr folder')
+parser.add_argument('--traj-folder', type=str, default=None, help='the path to the trajectory folder')
 parser.add_argument('--stride', type=int, default=5, help='stride for trajectory')
 #parser.add_argument('--use-backbone', action='store_true', default=False, help='Whether to use produce the data for backbone atoms')
-
 
 args = parser.parse_args()
 ########## for loading the BBA trajectory ####################################
@@ -50,7 +49,6 @@ print(coor_t2.shape)
 data = list([coor_t1, coor_t2])
 np.savez('pos_BBA.npz', data[0],data[1])
 
-quit()
 
 if torch.cuda.is_available():
 	device = torch.device('cpu')
@@ -126,7 +124,7 @@ def get_nbrs(all_coords, num_neighbors=args.num_neighbors):
 
 	return all_dists, all_inds
 
-ns = int(args.stride*0.2)
+ns = int(args.stride*0.2) # 0.2 ns is the timestep of trajectories
 dists, inds = get_nbrs(data, args.num_neighbors)
 np.savez('dists_BBA_'+str(args.num_neighbors)+'nbrs_'+ str(ns)+'ns'+'.npz', dists[0], dists[1])
 np.savez('inds_BBA_'+str(args.num_neighbors)+'nbrs_'+ str(ns)+'ns'+'.npz', inds[0], inds[1])

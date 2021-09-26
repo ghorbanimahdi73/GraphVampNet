@@ -27,7 +27,7 @@ else:
 	device = torch.device('cpu')
 
 
-class GraphFeature(nn.Module):
+class GraphVampNet(nn.Module):
 	''' wrapper class for different types of graph convolutions: ['GraphConvLayer', 'NeighborMultiHeadAttention', 'SchNets']
 	
 	parameters:
@@ -74,10 +74,10 @@ class GraphFeature(nn.Module):
 	def __init__(self, seq_file=args.seq_file, num_atoms=args.num_atoms, num_neighbors=args.num_neighbors,
 				n_classes=args.num_classes, n_conv=args.n_conv, dmin=args.dmin, dmax=args.dmax, step=args.step,
 				h_a=args.h_a, h_g=args.h_g, atom_embedding_init='normal', use_pre_trained=False, activation=nn.ReLU(),
-				pre_trained_weights_file=None, conv_type=args.conv_type, num_heads=args.num_heads, residual=False,
-				 use_backbone_atoms=args.use_backbone_atoms):
+				pre_trained_weights_file=None, conv_type=args.conv_type, num_heads=args.num_heads, residual=args.residual,
+				 use_backbone_atoms=args.use_backbone_atoms, dont_pool_backbone=args.dont_pool_backbone):
 
-		super(GraphFeature, self).__init__()
+		super(GraphVampNet, self).__init__()
 		self.seq_file = seq_file
 		self.num_atoms = num_atoms
 		self.num_neighbors = num_neighbors
@@ -107,20 +107,19 @@ class GraphFeature(nn.Module):
 														  self.num_heads) for _ in range(self.n_conv)])
 
 		elif self.conv_type == 'SchNet':
-			self.convs = nn.ModuleList([InteractionBlock(self.h_a,
-														 self.h_b, 
-														 self.h_a, 
-														 activation=self.activation, 
-														 normalization_layer=nn.BatchNorm1d()) for _ in range(self.n_conv)])
+			self.convs = nn.ModuleList([InteractionBlock(n_inputs=self.h_a,
+														 n_gaussians=self.h_b, 
+														 n_filters=self.h_a, 
+														 activation=nn.Tanh()) for _ in range(self.n_conv)])
 
 		self.conv_activation = nn.ReLU()
-		self.fc_classes = LinearLayer(self.h_a, n_classes)
+		self.fc_classes = nn.Linear(self.h_a, n_classes)
 		self.init = atom_embedding_init
 		self.use_pre_trained = use_pre_trained
 		self.dont_pool_backbone = dont_pool_backbone
 
 		if args.use_backbone_atoms:
-			self.amino_emb = LinearLayer(self.h_a, self.h_g)
+			self.amino_emb =  nn.Linear(self.h_a, self.h_g)
 
 		if use_pre_trained:
 			self.pre_trained_emb(pre_trained_weights_file)
@@ -130,7 +129,7 @@ class GraphFeature(nn.Module):
 			self.atom_embeddings = torch.tensor(atom_emb, dtype=torch.float32).to(device)
 			self.h_init = atom_emb.shape[-1] # dimension of atom embedding [20]
 			emb = nn.Embedding.from_pretrained(self.atom_embeddings, freeze=False)
-			self.atom_emb = LinearLayer(self.h_init, self.h_a) # linear layer for atom features
+			self.atom_emb = nn.Linear(self.h_init, self.h_a) # linear layer for atom features
 
 		else:
 			# initialize the atom embeddings randomly
@@ -152,7 +151,7 @@ class GraphFeature(nn.Module):
 		self.atom_embeddings = torch.stack(embed_list, dim=0)
 		self.h_init = self.atom_embeddings.shape[-1] # dimension atom embedding init
 		self.atom_emb = nn.Embedding.from_pretrained(self, atom_embeddings, freeze=False)
-		self.embedding = LinearLayer(self.h_init, self.h_a)
+		self.embedding = nn.Linear(self.h_init, self.h_a)
 
 
 
@@ -287,9 +286,9 @@ class GraphFeature(nn.Module):
 
 		elif args.conv_type == 'NeighborMultiHeadAttention':
 			for idx in range(self.n_conv):
-				tmp_conv = self.convs[idx](atom_emb=atom_emb, 
-										   nbr_emb=nbr_emb, 
-										   nbr_adj_list=nbr_adj_list)
+				tmp_conv = self.convs[idx](h_V=atom_emb, 
+										   h_E=nbr_emb, 
+										   mask_attend=nbr_adj_list)
 				if self.residual:
 					atom_emb = atom_emb + tmp_conv
 				else:
@@ -297,9 +296,10 @@ class GraphFeature(nn.Module):
 
 		elif args.conv_type == 'SchNet':
 			for idx in range(self.n_conv):
-				tmp_conv = InteractionBlock(features=atom_emb,
-											rbf_expansion=nbr_emb,
-											neighbor_list=nbr_adj_list)
+				tmp_conv = self.convs[idx](features=atom_emb,
+										   rbf_expansion=nbr_emb,
+									       neighbor_list=nbr_adj_list)
+
 				if self.residual:
 					atom_emb = atom_emb + tmp_conv
 				else:

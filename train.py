@@ -37,7 +37,7 @@ if not os.path.exists(args.save_folder):
 	print('making the folder for saving checkpoints')
 	os.makedirs(args.save_folder)
 
-with open(args.save_folder+'args.txt','w') as f:
+with open(args.save_folder+'/args.txt','w') as f:
 	f.write(str(args))
 
 meta_file = os.path.join(args.save_folder, 'metadata.pkl')
@@ -45,8 +45,8 @@ pickle.dump({'args': args}, open(meta_file, 'wb'))
 
 #------------------- data as a list of trajectories ---------------------------
 
-dists1, inds1 = np.load(args.dist_data)['arr_0'], np.load(args.dist_data)['arr_0']
-dists2, inds2 = np.load(args.nbr_data)['arr_1'], np.load(args.nbr_data)['arr_1']
+dists1, inds1 = np.load(args.dist_data)['arr_0'], np.load(args.nbr_data)['arr_0']
+dists2, inds2 = np.load(args.dist_data)['arr_1'], np.load(args.nbr_data)['arr_1']
 
 mydists1 = torch.from_numpy(dists1).to(device)
 myinds1 = torch.from_numpy(inds1).to(device)
@@ -169,26 +169,26 @@ whole_dataloder = DataLoader(whole_dataset, batch_size=args.batch_size, shuffle=
 
 
 # for plotting the implied timescales
-#lagtimes = np.arange(1,201,2, dtype=np.int32)
-#timescales = []
-#for lag in tqdm(lagtimes):
-#	vamp = VAMP(lagtime=lag, observable_transform=model)
-#	whole_dataset = TrajectoryDataset.from_trajectories(lagtime=lag, data=data_np)
-#	whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
-#	for batch_0, batch_t in whole_dataloder:
-#		vamp.partial_fit((batch_0.numpy(), batch_t.numpy()))
+lagtimes = np.arange(1,201,2, dtype=np.int32)
+timescales = []
+for lag in tqdm(lagtimes):
+	vamp = VAMP(lagtime=lag, observable_transform=model)
+	whole_dataset = TrajectoryDataset.from_trajectories(lagtime=lag, data=data_np)
+	whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
+	for batch_0, batch_t in whole_dataloder:
+		vamp.partial_fit((batch_0.numpy(), batch_t.numpy()))
 #
-#	covariances = vamp._covariance_estimator.fetch_model()
-#	ts = vamp.fit_from_covariances(covariances).fetch_model().timescales(k=5)
-#	timescales.append(ts)
+	covariances = vamp._covariance_estimator.fetch_model()
+	ts = vamp.fit_from_covariances(covariances).fetch_model().timescales(k=5)
+	timescales.append(ts)
 
 
-#f, ax = plt.subplots(1, 1)
-#ax.semilogy(lagtimes, timescales)
-#ax.set_xlabel('lagtime')
-#ax.set_ylabel('timescale / step')
-#ax.fill_between(lagtimes, ax.get_ylim()[0]*np.ones(len(lagtimes)), lagtimes, alpha=0.5, color='grey');
-#f.savefig(args.save_folder+'/ITS.png')
+f, ax = plt.subplots(1, 1)
+ax.semilogy(lagtimes, timescales)
+ax.set_xlabel('lagtime')
+ax.set_ylabel('timescale / step')
+ax.fill_between(lagtimes, ax.get_ylim()[0]*np.ones(len(lagtimes)), lagtimes, alpha=0.5, color='grey');
+f.savefig(args.save_folder+'/ITS.png')
 
 
 def chunks(data, chunk_size=5000):
@@ -223,16 +223,16 @@ for data_tmp in data_np:
 		n_iter = n_iter + batch_size 
 	probs.append(state_probs)
 
-with open(args.save_folder+'/data_transformed.npz','w') as f:
-	np.savez(f, probs)
+# problem here
+np.savez(args.save_folder+'/transformed.npz', probs[0],probs[1])
 
 max_tau = 200
 lags = np.arange(1, max_tau, 1)
 
-its = get_its(probs, lags)
-plot_its(its, lags, ylog=False, save_folder=args.save_folder)
+#its = get_its(probs, lags)
+#plot_its(its, lags, ylog=False, save_folder=args.save_folder)
 
-steps = 8
+steps = 5
 tau_msm = 200
 predicted, estimated = get_ck_test(probs, steps, tau_msm)
 

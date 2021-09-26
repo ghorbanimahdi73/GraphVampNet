@@ -201,9 +201,3 @@ def _vamp_estimate_model_for_lag(estimator: VAMP, model, data, lagtime):
 		est.partial_fit((batch_0.numpy(), batch_t.numpy()))
 
 	return est.fetch_model()
-
-
-class VAMPKoopmanCKValidator(KoopmanChapmanKolmogorovValidator):
-
-	def fit(self, data, n_jobs=None, progress=None, **kw):
-		return super().fit(data, n_jobs, progress, _vamp_estimate_model_for_lag, **kw)

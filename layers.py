@@ -39,7 +39,7 @@ def LinearLayer(d_in, d_out, bias=True, activation=None, dropout=0, weight_init=
 	'''
 	seq = [nn.Linear(d_in, d_out, bias=bias)]
 	if activation is not None:
-		if isinstnace(activation, nn.Module):
+		if isinstance(activation, nn.Module):
 			seq += [activation]
 		else:
 			raise TypeError('Activation {} is not a valid torch.nn.Module'.format(str(activation)))
@@ -53,10 +53,8 @@ def LinearLayer(d_in, d_out, bias=True, activation=None, dropout=0, weight_init=
 		if weight_init == 'identity':
 			torch.nn.init.eye_(seq[0].weight)
 		if weight_init not in ['xavier', 'identity', None]:
-			if isinstnace(weight_init, int) or isinstnace(weight_init, float):
+			if isinstance(weight_init, int) or isinstance(weight_init, float):
 				torch.nn.init.constant_(seq[0].weight, weight_init)
-		else:
-			raise RuntimeError('Unknown weight initialization \"{}\"'.format(str(weight_init)))
 
 	return seq
 
@@ -136,7 +134,7 @@ class NeighborMultiHeadAttention(nn.Module):
 	updated node embedding after multihead attention of neighbors
 	'''
 	def __init__(self, num_hidden, num_in, num_heads=4):
-		super(NeighborAttention, self).__init__()
+		super(NeighborMultiHeadAttention, self).__init__()
 		self.num_heads = num_heads
 		self.num_hidden = num_hidden
 
@@ -230,10 +228,10 @@ class GraphConvLayer(nn.Module):
 		journal = {bioRxiv}
 	'''
 	def __init__(self, atom_emb_dim, bond_emb_dim):
-		super(ConvLayer, self).__init__()
+		super(GraphConvLayer, self).__init__()
 		self.h_a = atom_emb_dim
 		self.h_b = bond_emb_dim
-		self.fc_full = LinearLayer(2*self.h_a+self.h_b, 2*self.h_a)
+		self.fc_full = nn.Linear(2*self.h_a+self.h_b, 2*self.h_a)
 		self.sigmoid = nn.Sigmoid()
 		self.activation_hidden =nn.ReLU()
 		self.bn_hidden = nn.BatchNorm1d(2*self.h_a)
@@ -346,7 +344,7 @@ class ContinuousFilterConv(nn.Module):
 	def __init__(self, n_gaussians, n_filters, activation=nn.Tanh(), normalization_layer=None):
 
 		super(ContinuousFilterConv, self).__init__()
-		filter_layers = LinearLayer(n_gaussians, n_filters, bais=True, activation=activation)
+		filter_layers =  LinearLayer(n_gaussians, n_filters, bias=True, activation=activation)
 		filter_layers += LinearLayer(n_filters, n_filters, bias=True) # no activation here
 		self.filter_generator = nn.Sequential(*filter_layers)
 
@@ -373,7 +371,8 @@ class ContinuousFilterConv(nn.Module):
 		'''
 
 		# generate convolutional filter of size [n_frames, n_atoms, n_neighbors, n_features]
-		conv_filter = self.filter_generator(rbf_expansion)
+
+		conv_filter = self.filter_generator(rbf_expansion.to(torch.float32))
 
 		# Feature tensor needs to also be transformed from [n_frames, n_atoms, n_features]
 		# to [n_frames, n_atoms, n_neighbors, n_features]
@@ -381,12 +380,14 @@ class ContinuousFilterConv(nn.Module):
 
 		# size [n_frames, n_atoms*n_neighbors, 1]
 		neighbor_list = neighbor_list.reshape(-1, n_atoms*n_neighbors, 1)
+
 		# size [n_frames, natoms*n_neighbors, n_features]
 		neighbor_list = neighbor_list.expand(-1, -1, features.size(2))
 
 		# Gather the features into the respective places in the neighbor list
-		neighbor_features = torch.gather(features, 1, neighbor_list)
+		neighbor_features = torch.gather(features, 1, neighbor_list.to(torch.int64))
 		# Reshape back to [n_frames, n_atoms, n_neighbors, n_features] for element-wise multiplication
+
 		neighbor_features = neighbor_features.reshape(n_batch, n_atoms, n_neighbors, -1)
 
 		# element-wise multiplication of the features with the convolutional filter
@@ -397,7 +398,7 @@ class ContinuousFilterConv(nn.Module):
 
 
 		if self.normalization_layer is not None:
-			if isinstnace(self.normalization_layer, NeighborNormLayer):
+			if isinstance(self.normalization_layer, NeighborNormLayer):
 				return self.normalization_layer(aggregated_features, n_neighbors)
 			else:
 				return self.normalization_layer(aggregated_features)
@@ -451,7 +452,7 @@ class InteractionBlock(nn.Module):
 										   normalization_layer=normalization_layer)
 
 		output_layers = LinearLayer(n_filters, n_filters, bias=True, activation=activation)
-		output_layers += LinearLayer(n_filters, n_filters, bias=True, activation=None)
+		output_layers += LinearLayer(n_filters, n_filters, bias=True)
 		self.output_dense = nn.Sequential(*output_layers)
 
 	def forward(self, features, rbf_expansion, neighbor_list):
@@ -473,6 +474,6 @@ class InteractionBlock(nn.Module):
 			a prior embedding/interaction layer. [n_frames, n_atoms, n_filters]
 		'''
 		init_feature_output = self.initial_dense(features)
-		conv_output = self.cfconv(init_feature_output, rbf_expansion, neighbor_list)
-		output_features = self.output_dense(conv_output)
+		conv_output = self.cfconv(init_feature_output.to(torch.float32), rbf_expansion.to(torch.float32), neighbor_list).to(torch.float32)
+		output_features = self.output_dense(conv_output).to(torch.float32)
 		return output_features

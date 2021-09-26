@@ -19,7 +19,7 @@ def buildParser():
 	parser.add_argument('--n_conv', type=int, default=4, help='Number of convolution layers')
 	parser.add_argument('--save_checkpoints', default=True,  action='store_true', help='If True, stores checkpoints')
 	parser.add_argument('--conv_type', default='', type=str, help='the type of convolution layer, one of \
-				        [ConvLayer, NeighborMultiHeadAttention]')
+				        [GraphConvLayer, NeighborMultiHeadAttention, SchNet]')
 	parser.add_argument('--dmin', default=0., type=float, help='Minimum distance for the gaussian filter')
 	parser.add_argument('--dmax', default=3., type=float, help='maximum distance for the gaussian filter')
 	parser.add_argument('--step', default=0.2, type=float, help='step for the gaussian filter')
@@ -35,6 +35,6 @@ def buildParser():
 	parser.add_argument('--dist-data', type=str, default='dists_BBA_7nbrs_1ns.npz', help='the distnace data file')
 	parser.add_argument('--nbr-data', type=str, default='inds_BBA_7nbrs_1ns.npz', help='the neighbors data file')
 	parser.add_argument('--score-method', type=str, default='VAMP2', help='the scoring method of VAMPNet')
-
+	parser.add_argument('--residual', action='store_true', default=False, help='Whether to use residual connections')
 	return parser
 	
