@@ -8,9 +8,8 @@ import torch.nn.functional as F
 import mdshare
 from torch.utils.data import DataLoader
 import json
-from sklearn.neighbors import BallTree
 from args import buildParser
-from layers import GaussianDistance, ConvLayer, NeighborAttention
+from layers import GaussianDistance, NeighborMultiHeadAttention, InteractionBlock, GraphConvLayer
 from model import GraphVampNet
 from deeptime.util.data import TrajectoryDataset
 from deeptime.decomposition.deep import VAMPNet
@@ -24,7 +23,7 @@ from utils_vamp import *
 
 if torch.cuda.is_available():
 	device = torch.device('cuda')
-	print('cuda is is available')
+	print('cuda is available')
 else:
 	print('Using CPU')
 	device = torch.device('cpu')
@@ -32,46 +31,22 @@ else:
 # ignore deprecation warnings
 warnings.filterwarnings('ignore',category=DeprecationWarning)
 
-
 args = buildParser().parse_args()
-
-with open('args.txt','w') as f:
-	f.write(str(args))
 
 if not os.path.exists(args.save_folder):
 	print('making the folder for saving checkpoints')
 	os.makedirs(args.save_folder)
 
-
-#sys.stdout = Logger(args.save_folder)
-#print(vars(args))
-
+with open(args.save_folder+'args.txt','w') as f:
+	f.write(str(args))
 
 meta_file = os.path.join(args.save_folder, 'metadata.pkl')
 pickle.dump({'args': args}, open(meta_file, 'wb'))
 
-
-
-#---------------load Ala-dipeptide traj ---------------
-#ala_coords_file = mdshare.fetch(
-#    "alanine-dipeptide-3x250ns-heavy-atom-positions.npz", working_directory="data"
-#)
-#with np.load(ala_coords_file) as fh:
-#    data = [fh[f"arr_{i}"].astype(np.float32) for i in range(3)]
-#
-#dihedral_file = mdshare.fetch(
-#    "alanine-dipeptide-3x250ns-backbone-dihedrals.npz", working_directory="data"
-#)
-
-#with np.load(dihedral_file) as fh:
-#    dihedral = [fh[f"arr_{i}"] for i in range(3)]
-#
-
-
 #------------------- data as a list of trajectories ---------------------------
-dists1, inds1 = np.load('dists_BBA_7.npz')['arr_0'], np.load('inds_BBA_7.npz')['arr_0']
-dists2, inds2 = np.load('dists_BBA_7.npz')['arr_1'], np.load('inds_BBA_7.npz')['arr_1']
 
+dists1, inds1 = np.load(args.dist_data)['arr_0'], np.load(args.dist_data)['arr_0']
+dists2, inds2 = np.load(args.nbr_data)['arr_1'], np.load(args.nbr_data)['arr_1']
 
 mydists1 = torch.from_numpy(dists1).to(device)
 myinds1 = torch.from_numpy(inds1).to(device)
@@ -99,7 +74,7 @@ lobe = GraphVampNet()
 lobe_timelagged = deepcopy(lobe).to(device=device)
 lobe = lobe.to(device)
 
-vampnet = VAMPNet(lobe=lobe, lobe_timelagged=lobe_timelagged, learning_rate=args.lr, device=device, optimizer='Adam', score_method='VAMP2')
+vampnet = VAMPNet(lobe=lobe, lobe_timelagged=lobe_timelagged, learning_rate=args.lr, device=device, optimizer='Adam', score_method=args.score_method)
 
 def count_parameters(model):
 	'''
@@ -115,7 +90,7 @@ def train(train_loader , n_epochs, validation_loader=None):
 	-----------------
 	train_loader: torch.utils.data.DataLoader
 		The data to use for training, should yield a tuple of batches representing instantaneous and time-lagged samples
-	n_epochs: the number of epochs for training
+	n_epochs: int, the number of epochs for training
 	validation_loader: torch.utils.data.DataLoader:
 		The validation data should also be yielded as a two-element tuple.
 
@@ -144,12 +119,9 @@ def train(train_loader , n_epochs, validation_loader=None):
 			torch.save({
 				'epoch' : epoch,
 				'state_dict': lobe.state_dict(),
-				#'train_scores': vampnet.train_scores.T,
-				#'validation_scores': vampnet.validation_scores.T,
 				}, args.save_folder+'/logs_'+str(epoch)+'.pt')
 
 	return vampnet.fetch_model()
-
 
 
 plt.set_cmap('jet')
@@ -176,7 +148,6 @@ elif args.train:
 	with open(args.save_folder+'/validation_scores.npy','wb') as f:
 		np.save(f, vampnet.validation_scores)
 
-
 	# plotting the training and validation scores of the model
 	plt.loglog(*vampnet.train_scores.T, label='training')
 	plt.loglog(*vampnet.validation_scores.T, label='validation')
@@ -185,7 +156,7 @@ elif args.train:
 	plt.legend()
 	plt.savefig(args.save_folder+'/scores.png')
 
-
+# making a numpy array of data for analysis
 data_np = []
 for i in range(len(data)):
 	data_np.append(data[i].cpu().numpy())
@@ -220,8 +191,6 @@ whole_dataloder = DataLoader(whole_dataset, batch_size=args.batch_size, shuffle=
 #f.savefig(args.save_folder+'/ITS.png')
 
 
-
-
 def chunks(data, chunk_size=5000):
 	'''
 	splitting the trajectory into chunks for passing into analysis part
@@ -244,21 +213,21 @@ n_classes = int(args.num_classes)
 
 probs = []
 for data_tmp in data_np:
+	#  transforming the data into the vampnet for modeling the dynamics
 	mydata = chunks(data_tmp, chunk_size=5000)
 	state_probs = np.zeros((data_tmp.shape[0], n_classes))
 	n_iter = 0
 	for i,batch in enumerate(mydata):
 		batch_size = len(batch)
 		state_probs[n_iter:n_iter+batch_size] = model.transform(batch)
-
 		n_iter = n_iter + batch_size 
-
-	print(state_probs.shape)
 	probs.append(state_probs)
 
+with open(args.save_folder+'/data_transformed.npz','w') as f:
+	np.savez(f, probs)
 
 max_tau = 200
-lags = np.arange(1, max_tau, 2)
+lags = np.arange(1, max_tau, 1)
 
 its = get_its(probs, lags)
 plot_its(its, lags, ylog=False, save_folder=args.save_folder)
@@ -271,83 +240,12 @@ plot_ck_test(predicted, estimated, n_classes, steps, tau_msm, args.save_folder)
 
 quit()
 
-def chapman_kolmogorov_validator(model, mlags, n_observables=None,
-								observables='phi', statistics='psi'):
-	''' returns a chapman-kolmogrov validator based on this estimator and a test model
-
-	parameters:
-	-----------------
-	model: VAMP model
-	mlags: int or int-array
-		multiple of lagtimes of the test_model to test against
-	test_model: CovarianceKoopmanModel, optional, default=None,
-		The model that is tested, if not provided uses this estimator's encapsulated model.
-	n_observables: int, optional, default=None,
-		limit the number of default observables to this number. only used if 'observables' are Nonr or 'statistics' are None.
-	observables: (input_dimension, n_observables) ndarray
-		coefficents that express one or multiple observables in the basis of the input features
-	statistics: (input_dim, n_statistics) ndarray
-		coefficents that express one or more statistics in the basis of the input features
-
-	Returns:
-	------------------
-	validator: KoopmanChapmanKolmogrovValidator
-		the validator
-	''' 
-	test_model = model.fetch_model()
-	assert test_model is not None, 'We need a test model via argument or an estimator which was already fit to data'
-
-	lagtime = model.lagtime
-	if n_observables is not None:
-		if n_observables > test_model.dim:
-			import warnings
-			warnings.warn('selected singular functgions as observables but dimension is lower thanthe requested number of observables')
-			n_observables = test_model.dim
-
-	else:
-		n_observables = test_model.dim
-
-	if isinstance(observables, str) and observables == 'phi':
-		observables = test_model.singular_vectors_right[:, :n_observables]
-		observables_mean_free = True
-	else:
-		observables_mean_free = False
-
-	if isinstance(statistics, str) and statistics == 'psi':
-		statistics = test_model.singular_vectors_left[:, :n_observables]
-		statistics_mean_free = True
-	else:
-		statistics_mean_free = False
-
-	return VAMPKoopmanCKValidator(test_model, model, lagtime, mlags, observables, statistics,
-										observables_mean_free, statistics_mean_free)
-
-def _vamp_estimate_model_for_lag(estimator: VAMP, model, data, lagtime):
-	est = VAMP(lagtime=lagtime, dim=estimator.dim, var_cutoff=estimator.var_cutoff, scaling=estimator.scaling,
-		epsilon=estimator.epsilon, observable_transform=estimator.observable_transform)
-
-	whole_dataset = TrajectoryDataset.from_trajectories(lagtime=lagtime, data=data)
-	whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
-	for batch_0, batch_t in whole_dataloder:
-		est.partial_fit((batch_0.numpy(), batch_t.numpy()))
-
-	return est.fetch_model()
-
-
-class VAMPKoopmanCKValidator(KoopmanChapmanKolmogorovValidator):
-
-	def fit(self, data, n_jobs=None, progress=None, **kw):
-		return super().fit(data, n_jobs, progress, _vamp_estimate_model_for_lag, **kw)
-
-
 # for plotting the CK test
 vamp = VAMP(lagtime=lag, observable_transform=model)
 whole_dataset = TrajectoryDataset.from_trajectories(lagtime=200, data=data_np)
 whole_dataloder = DataLoader(whole_dataset, batch_size=10000, shuffle=False)
 for batch_0, batch_t in whole_dataloder:
 	vamp.partial_fit((batch_0.numpy(), batch_t.numpy()))
-
-
 
 validator = chapman_kolmogorov_validator(model=vamp, mlags=10)
 

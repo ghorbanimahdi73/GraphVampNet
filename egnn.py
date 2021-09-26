@@ -155,6 +155,3 @@ def unsorted_segment_mean(data, segment_ids, num_segments):
 	result.scatter_add_(0, segment_ids, data)
 	count.scatter_add_(0, segment_ids, torch.ones_like(data))
 	return result / count.clamp(min=1)
-
-
-
