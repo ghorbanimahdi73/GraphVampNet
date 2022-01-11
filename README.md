@@ -2,4 +2,4 @@
 
 GraphVAMPNet code
 
-![figure](figure_1.JPG)
+![figure](figure_1.PNG)
