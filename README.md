@@ -1,5 +1,7 @@
 # GraphVampNet
 
+![figure](figure_1.png)
+
 This repo contains the code for **GraphVAMPNet**
 
 
@@ -27,7 +29,7 @@ python train.py --epochs 100 --batch-size 1000 --lr 0.0005 --hidden 16
 - deeptime
 - torch_scatter
 
-![figure](figure_1.png)
+
 
 ## Sources:
 - VAMPNet code is based on deeptime package [deeptime](https://deeptime-ml.github.io/latest/index.html)
