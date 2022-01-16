@@ -26,3 +26,6 @@ python train.py --epochs 100 --batch-size 1000 --lr 0.0005 --hidden 16
 
 
 ![figure](figure_1.png)
+
+## Sources:
+VAMPNet code is based on deeptime package [Github Pages](https://deeptime-ml.github.io/latest/index.html)
