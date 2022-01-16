@@ -23,7 +23,9 @@ python train.py --epochs 100 --batch-size 1000 --lr 0.0005 --hidden 16
 ```
 
 ## Requirements
-
+- pytorch
+- deeptime
+- torch_scatter
 
 ![figure](figure_1.png)
 
